@@ -106,18 +106,26 @@ class StateDB:
                 );
                 """
             )
-            # Reset any stale IN_PROGRESS statuses left over from a hard crash back to PENDING
-            # (preserving resumable_uri so uploads resume from exact byte offset!)
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(files)").fetchall()}
             if "target_account" not in cols:
                 conn.execute("ALTER TABLE files ADD COLUMN target_account TEXT;")
                 conn.execute(
                     "UPDATE files SET target_account = 'mounted:G:\\' WHERE target_account IS NULL AND transfer_mode = 'mounted'"
                 )
-            conn.execute(
+
+    def reset_stale_in_progress(self) -> int:
+        """
+        Return IN_PROGRESS files left over from a crash or hard stop back to PENDING (keeping resumable_uri so
+        uploads resume from the exact byte offset). Only call this while no worker of the owning engine is
+        running; it is deliberately NOT part of opening the database, so a second process (e.g. `migrate.py
+        status` next to a live dashboard) cannot reset files another process is uploading.
+        """
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
                 "UPDATE files SET status = 'PENDING', updated_at = ? WHERE status = 'IN_PROGRESS'",
                 (time.time(),),
             )
+            return cur.rowcount
 
     def log_event(self, level: str, message: str, bucket_name: Optional[str] = None) -> None:
         now = time.time()
@@ -309,7 +317,12 @@ class StateDB:
         size_bytes: int,
         target_account: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Check if an identical clip was already migrated to the SAME target Google account."""
+        """
+        Check if an identical clip was already migrated to the SAME target Google account.
+
+        A file with a B2 SHA-1 only matches on SHA-1 + size, so two different clips that share a basename and
+        size are never conflated. Basename + size is only the fallback for files B2 has no SHA-1 for.
+        """
         acct_clause = " AND target_account = ?" if target_account else ""
         with self._lock, self._connect() as conn:
             if b2_sha1:
@@ -329,8 +342,7 @@ class StateDB:
                     """,
                     params_sha,
                 ).fetchone()
-                if row:
-                    return dict(row)
+                return dict(row) if row else None
 
             params_name: List[Any] = [exclude_bucket, basename, size_bytes]
             if target_account:

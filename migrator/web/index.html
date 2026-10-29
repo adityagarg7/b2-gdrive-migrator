@@ -486,6 +486,13 @@
       return `ETA: ${s}s`;
     }
 
+    // Everything that comes from B2, Drive or the event log (file names, errors, ...) is untrusted text.
+    function esc(v) {
+      return String(v ?? '').replace(/[&<>"']/g, ch => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+      ));
+    }
+
     async function apiGet(url) {
       const r = await fetch(url);
       return await r.json();
@@ -639,12 +646,12 @@
           : `<span style="font-size:12px; color:var(--muted);">${b.progress_pct.toFixed(1)}%</span>`;
 
         return `
-          <div class="bucket-card ${isAct ? 'active' : ''}" onclick="selectBucket('${b.bucket_name}')">
+          <div class="bucket-card ${isAct ? 'active' : ''}" data-bucket="${esc(b.bucket_name)}" onclick="selectBucket(this.dataset.bucket)">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               ${stepBadge}
               ${statusLabel}
             </div>
-            <div class="bucket-name">${b.bucket_name}</div>
+            <div class="bucket-name">${esc(b.bucket_name)}</div>
             <div class="bucket-meta">
               <span>${b.done_files.toLocaleString()} / ${b.total_files.toLocaleString()} files</span>
               <span>${fmtBytes(b.done_bytes)} / ${fmtBytes(b.total_bytes)}</span>
@@ -699,7 +706,7 @@
       const b2El = document.getElementById('b2KeyStatusText');
       const b2Form = document.getElementById('b2CredsForm');
       if (data.b2?.configured) {
-        b2El.innerHTML = `✅ Backblaze B2 Key Configured (<code>${data.b2.key_hint}</code>)`;
+        b2El.innerHTML = `✅ Backblaze B2 Key Configured (<code>${esc(data.b2.key_hint)}</code>)`;
       } else {
         b2El.innerHTML = `⚠️ Backblaze B2 Key Not Configured — paste your read-only key below to scan buckets:`;
         if (!b2FormManuallyToggled) b2Form.style.display = 'grid';
@@ -720,7 +727,7 @@
       if (data.auth.connected) {
         cBadge.className = 'st-pill st-COMPLETED';
         cBadge.textContent = 'Connected';
-        const email = data.cloud_drive?.email ? ` as <b>${data.cloud_drive.email}</b>` : '';
+        const email = data.cloud_drive?.email ? ` as <b>${esc(data.cloud_drive.email)}</b>` : '';
         const freeCloud = data.cloud_drive?.free_bytes != null
           ? ` (${fmtBytes(data.cloud_drive.free_bytes)} cloud free)`
           : '';
@@ -751,7 +758,7 @@
       } else {
         cBadge.className = 'st-pill st-PENDING';
         cBadge.textContent = 'Sign-In Needed';
-        const err = data.auth.auth_error ? ` <span style="color:var(--red);">(${data.auth.auth_error})</span>` : '';
+        const err = data.auth.auth_error ? ` <span style="color:var(--red);">(${esc(data.auth.auth_error)})</span>` : '';
         oauthText.innerHTML = `Connect any Google Drive account for zero-disk Direct Cloud Streaming:${err}`;
         btnConn.style.display = 'inline-flex';
         btnLink.style.display = 'inline-flex';
@@ -797,7 +804,7 @@
           return `
             <div class="worker-item">
               <div style="display:flex; justify-content:space-between; font-size:12.5px; font-weight:600;">
-                <span class="mono">[${w.worker}] ${w.file_name}</span>
+                <span class="mono">[${esc(w.worker)}] ${esc(w.file_name)}</span>
                 <span>${fmtBytes(w.bytes_done)} / ${fmtBytes(w.size_bytes)} (${pct}%)</span>
               </div>
               <div class="progress-track" style="height:6px; margin-top:6px;">
@@ -812,8 +819,8 @@
       const logsEl = document.getElementById('logsContainer');
       logsEl.innerHTML = (data.events || []).map(ev => {
         const d = new Date(ev.ts * 1000).toLocaleTimeString();
-        const btag = ev.bucket_name ? `[${ev.bucket_name}] ` : '';
-        return `<div class="log-row"><span style="color:var(--muted);">${d}</span><span class="log-${ev.level}"><b>${ev.level}</b> ${btag}${ev.message}</span></div>`;
+        const btag = ev.bucket_name ? `[${esc(ev.bucket_name)}] ` : '';
+        return `<div class="log-row"><span style="color:var(--muted);">${d}</span><span class="log-${esc(ev.level)}"><b>${esc(ev.level)}</b> ${btag}${esc(ev.message)}</span></div>`;
       }).join('');
     }
 
@@ -822,7 +829,7 @@
       currentPlan = plan;
       const box = document.getElementById('planSummaryBox');
       if (!plan.scanned) {
-        box.innerHTML = `Scanning Backblaze B2 catalog for <b>${plan.bucket_name}</b>...`;
+        box.innerHTML = `Scanning Backblaze B2 catalog for <b>${esc(plan.bucket_name)}</b>...`;
         return;
       }
       let extraNote = '';
@@ -837,7 +844,7 @@
       }
       box.innerHTML = `
         <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-          <span><b>Selected Bucket:</b> <code>${plan.bucket_name}</code></span>
+          <span><b>Selected Bucket:</b> <code>${esc(plan.bucket_name)}</code></span>
           <span><b>Remaining to Transfer:</b> ${plan.net_transfer_files.toLocaleString()} files (${fmtBytes(plan.net_transfer_bytes)})</span>
           <span><b>Failed:</b> ${plan.summary.failed_files}</span>
         </div>
@@ -847,10 +854,10 @@
       const mBody = document.getElementById('mappingsTableBody');
       mBody.innerHTML = (plan.sample_mappings || []).map(m => `
         <tr>
-          <td class="mono">${m.source}</td>
-          <td class="mono" style="color:#93c5fd;">${m.destination}</td>
+          <td class="mono">${esc(m.source)}</td>
+          <td class="mono" style="color:#93c5fd;">${esc(m.destination)}</td>
           <td>${fmtBytes(m.size_bytes)}</td>
-          <td><span class="st-pill st-${m.status}">${m.status}</span></td>
+          <td><span class="st-pill st-${esc(m.status)}">${esc(m.status)}</span></td>
         </tr>
       `).join('');
     }
@@ -866,11 +873,11 @@
       }
       tbody.innerHTML = files.map(f => `
         <tr>
-          <td class="mono">${f.file_name}</td>
+          <td class="mono">${esc(f.file_name)}</td>
           <td>${fmtBytes(f.size_bytes)}</td>
           <td>
-            <span class="st-pill st-${f.status}">${f.status}</span>
-            ${f.last_error ? `<div style="color:var(--red); font-size:11px; margin-top:2px;">${f.last_error}</div>` : ''}
+            <span class="st-pill st-${esc(f.status)}">${esc(f.status)}</span>
+            ${f.last_error ? `<div style="color:var(--red); font-size:11px; margin-top:2px;">${esc(f.last_error)}</div>` : ''}
           </td>
           <td class="mono" style="color:var(--muted);">${f.b2_sha1 ? f.b2_sha1.slice(0, 14) + '…' : '—'}</td>
           <td class="mono" style="color:var(--green);">${f.verified_sha1 ? '✓ ' + f.verified_sha1.slice(0, 14) + '…' : '—'}</td>

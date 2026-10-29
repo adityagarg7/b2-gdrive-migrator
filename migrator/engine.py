@@ -126,7 +126,7 @@ class MigrationEngine:
     # ------------------------------------------------------------------
     def start_background_scan(self, bucket_name: Optional[str] = None) -> bool:
         with self._lock:
-            if self._state in ("SCANNING", "RUNNING", "PAUSING"):
+            if self._state in ("SCANNING", "RUNNING", "PAUSING", "CACHE_WAIT"):
                 return False
             self._state = "SCANNING"
             self._state_detail = f"Scanning Backblaze B2 ({bucket_name or 'all buckets'})..."
@@ -232,6 +232,7 @@ class MigrationEngine:
 
             completed_other_sha1 = set()
             completed_other_name_size = set()
+            catalog_archive_sha1 = set()
             catalog_archive_name_size = set()
             cur_acct = self.get_current_target_account_key()
             if self.settings.skip_cross_bucket_duplicates:
@@ -251,8 +252,10 @@ class MigrationEngine:
 
                 if target_bucket == "fourvectors-16-sep-27":
                     for r in conn.execute(
-                        "SELECT basename, size_bytes FROM files WHERE bucket_name = 'fourvectors-archive'"
+                        "SELECT b2_sha1, basename, size_bytes FROM files WHERE bucket_name = 'fourvectors-archive'"
                     ):
+                        if r["b2_sha1"]:
+                            catalog_archive_sha1.add((r["b2_sha1"], int(r["size_bytes"])))
                         catalog_archive_name_size.add((r["basename"], int(r["size_bytes"])))
 
         would_dedup_now_files = 0
@@ -284,9 +287,10 @@ class MigrationEngine:
             if r["status"] in ("COMPLETED", "SKIPPED_DEDUP", "SKIPPED_EXISTS"):
                 continue
 
+            # Mirrors StateDB.find_completed_duplicate: SHA-1 + size when B2 has a SHA-1, basename + size otherwise.
             is_done_dup = self.settings.skip_cross_bucket_duplicates and (
                 (r["b2_sha1"] and (r["b2_sha1"], sz) in completed_other_sha1)
-                or (r["basename"], sz) in completed_other_name_size
+                or (not r["b2_sha1"] and (r["basename"], sz) in completed_other_name_size)
             )
             if is_done_dup:
                 would_dedup_now_files += 1
@@ -295,7 +299,9 @@ class MigrationEngine:
                 net_transfer_files += 1
                 net_transfer_bytes += sz
 
-            if (r["basename"], sz) in catalog_archive_name_size:
+            if (r["b2_sha1"] and (r["b2_sha1"], sz) in catalog_archive_sha1) or (
+                not r["b2_sha1"] and (r["basename"], sz) in catalog_archive_name_size
+            ):
                 archive_overlap_files += 1
                 archive_overlap_bytes += sz
 
@@ -326,8 +332,10 @@ class MigrationEngine:
         retry_failed: bool = True,
     ) -> Tuple[bool, str]:
         with self._lock:
-            if self._state in ("RUNNING", "SCANNING", "PAUSING"):
+            if self._state in ("RUNNING", "SCANNING", "PAUSING", "CACHE_WAIT"):
                 return False, f"Engine is currently {self._state}"
+            if any(w.is_alive() for w in self._workers):
+                return False, "Previous workers are still finishing their current chunk; try again in a moment"
 
             if bucket_name:
                 self.settings.active_bucket = bucket_name
@@ -361,6 +369,11 @@ class MigrationEngine:
                 )
                 if not ok:
                     return False, detail
+
+            # No worker of this engine is alive here, so any IN_PROGRESS row is left over from a crash or hard stop.
+            stale_cnt = self.db.reset_stale_in_progress()
+            if stale_cnt:
+                self.db.log_event("INFO", f"Re-queued {stale_cnt} interrupted file(s) from a previous run", target_bucket)
 
             if retry_failed:
                 reset_cnt = self.db.reset_failed_files(target_bucket)

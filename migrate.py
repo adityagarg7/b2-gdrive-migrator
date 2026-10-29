@@ -205,6 +205,8 @@ def cmd_dashboard(engine: MigrationEngine, args: argparse.Namespace) -> int:
     print(" FourVectors Backblaze B2 -> Google Drive Migration Dashboard")
     print(f" Local URL : {url}")
     print(" Press Ctrl+C to stop server (checkpoints are saved in SQLite)")
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(" WARNING: the dashboard has no login; anyone who can reach this address controls the migration.")
     print("===============================================================")
     if not args.no_browser:
         webbrowser.open(url)

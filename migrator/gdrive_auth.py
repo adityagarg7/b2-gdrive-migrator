@@ -33,6 +33,9 @@ class GDriveAuthManager:
     ) -> None:
         self.rclone_conf = Path(rclone_conf)
         self.rclone_conf.parent.mkdir(parents=True, exist_ok=True)
+        # While a sign-in runs, the current login is parked here instead of being deleted.
+        self._backup_conf = self.rclone_conf.with_name(self.rclone_conf.name + ".prev")
+        self._restore_conf()  # a previous sign-in attempt may have been killed mid-flight
         self.on_account_connected = on_account_connected
         self._lock = threading.RLock()
         self._auth_proc: Optional[subprocess.Popen] = None
@@ -78,6 +81,7 @@ class GDriveAuthManager:
                 else:
                     self._auth_proc = None
                     if ret == 0 and self.is_connected():
+                        self._backup_conf.unlink(missing_ok=True)  # the new login replaces the parked one
                         self._auth_state = "IDLE"
                         self._auth_error = None
                         self._auth_url = None
@@ -90,6 +94,8 @@ class GDriveAuthManager:
                         tail = "\n".join(self._auth_logs[-5:]).strip()
                         self._auth_error = tail[-300:] if tail else f"OAuth exited with code {ret}"
                         self._auth_url = None
+                        self._restore_conf()
+                        self._notified_connected = self.is_connected()
 
             connected = self.is_connected()
             rclone_exe = get_rclone_exe(auto_download=False)
@@ -127,10 +133,7 @@ class GDriveAuthManager:
             if switch_account or self._auth_proc is not None:
                 self.cancel_oauth()
             if switch_account:
-                if self.rclone_conf.exists():
-                    self.rclone_conf.unlink(missing_ok=True)
                 self._cached_quota = None
-                self._notified_connected = False
 
             self._auth_state = "SIGNING_IN"
             self._auth_error = None
@@ -139,8 +142,8 @@ class GDriveAuthManager:
             self._reader_done = False
             self._notified_connected = False
 
-            if self.rclone_conf.exists():
-                self.rclone_conf.unlink(missing_ok=True)
+            # Park (don't delete) the current login: a cancelled or failed sign-in puts it back.
+            self._stash_conf()
 
             cmd = [
                 str(rclone_exe),
@@ -178,6 +181,8 @@ class GDriveAuthManager:
                 full_out = "\n".join(collected)
                 tm = TOKEN_JSON_RE.search(full_out)
                 with self._lock:
+                    if self._auth_proc is not proc:
+                        return  # cancelled or superseded: a stale sign-in must never write a token
                     if proc.returncode == 0 and tm:
                         token_json = tm.group(1).strip()
                         conf_text = f"[{self.REMOTE_NAME}]\ntype = drive\nscope = drive\ntoken = {token_json}\n"
@@ -196,6 +201,19 @@ class GDriveAuthManager:
 
         return self.get_auth_status()
 
+    def _stash_conf(self) -> None:
+        if self.rclone_conf.exists():
+            self.rclone_conf.replace(self._backup_conf)
+
+    def _restore_conf(self) -> None:
+        """Bring the parked login back if a sign-in ended without writing a new token."""
+        if not self._backup_conf.exists():
+            return
+        if self.rclone_conf.exists():
+            self._backup_conf.unlink(missing_ok=True)
+        else:
+            self._backup_conf.replace(self.rclone_conf)
+
     def cancel_oauth(self) -> None:
         with self._lock:
             if self._auth_proc is not None and self._auth_proc.poll() is None:
@@ -203,6 +221,8 @@ class GDriveAuthManager:
             self._auth_proc = None
             self._auth_url = None
             self._auth_state = "IDLE"
+            self._restore_conf()
+            self._notified_connected = self.is_connected()
 
     def disconnect(self) -> None:
         with self._lock:

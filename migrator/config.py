@@ -57,8 +57,9 @@ class MigrationSettings:
     mounted_drive_root: str = "G:\\"
     # Keep bucket name as a subfolder under dest_root_folder (recommended: True)
     include_bucket_folder: bool = True
-    # Normalize split category folder names (default False = preserve exact B2 paths)
-    normalize_categories: bool = False
+    # Merge categories that exist in B2 under two folder names into one Drive folder
+    # (see CATEGORY_NORMALIZATION_MAP). Set False to preserve exact B2 paths.
+    normalize_categories: bool = True
     # Skip files already migrated from another bucket matching SHA-1 (or exact basename + byte size)
     skip_cross_bucket_duplicates: bool = True
     # Minimum free space on C:\ (in GiB) before Mounted G:\ mode pauses for DriveFS cache flush

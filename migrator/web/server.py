@@ -7,15 +7,34 @@ import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Dict, FrozenSet, Optional
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 from ..engine import MigrationEngine
 
 INDEX_HTML_PATH = Path(__file__).resolve().parent / "index.html"
 
+LOOPBACK_HOSTS: FrozenSet[str] = frozenset({"127.0.0.1", "localhost", "::1"})
+MAX_BODY_BYTES = 1024 * 1024
 
-def create_handler(engine: MigrationEngine):
+
+def _hostname_of(host_header: str) -> Optional[str]:
+    """Hostname part of a Host header value ('localhost:8765' -> 'localhost', '[::1]:8765' -> '::1')."""
+    try:
+        return urlsplit("//" + host_header).hostname
+    except ValueError:
+        return None
+
+
+def allowed_hosts_for(bind_host: str) -> Optional[FrozenSet[str]]:
+    """Host header names the dashboard answers to; None when bound to all interfaces (cannot be pinned)."""
+    host = (bind_host or "").strip().lower()
+    if host in ("", "0.0.0.0", "::"):
+        return None
+    return LOOPBACK_HOSTS | {host}
+
+
+def create_handler(engine: MigrationEngine, allowed_hosts: Optional[FrozenSet[str]] = LOOPBACK_HOSTS):
     class DashboardHandler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:
             # Silence noisy 1-second polling logs in terminal
@@ -27,8 +46,40 @@ def create_handler(engine: MigrationEngine):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(raw)
+
+        def _reject_untrusted(self, post: bool) -> bool:
+            """
+            Refuse DNS-rebinding and cross-site requests (the dashboard has no login, so any web page open in
+            the same browser could otherwise drive it). Replies and returns True when the request is refused.
+            """
+
+            def deny(status: int, message: str) -> bool:
+                self._send_json({"error": message}, status=status)
+                return True
+
+            host_header = self.headers.get("Host") or ""
+            if allowed_hosts is not None and _hostname_of(host_header) not in allowed_hosts:
+                return deny(403, "Host header not allowed")
+            if not post:
+                return False
+
+            origin = self.headers.get("Origin")
+            if origin and urlsplit(origin).netloc.lower() != host_header.lower():
+                return deny(403, "Cross-origin requests are not allowed")
+            # Only the dashboard's own fetch() sends JSON; a cross-site form or no-cors request cannot.
+            content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if content_type != "application/json":
+                return deny(415, "Content-Type must be application/json")
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return deny(400, "Invalid Content-Length")
+            if length > MAX_BODY_BYTES:
+                return deny(413, "Request body too large")
+            return False
 
         def _read_json_body(self) -> Dict[str, Any]:
             length = int(self.headers.get("Content-Length") or 0)
@@ -38,6 +89,8 @@ def create_handler(engine: MigrationEngine):
             return json.loads(body) if body.strip() else {}
 
         def do_GET(self) -> None:
+            if self._reject_untrusted(post=False):
+                return
             parsed = urlparse(self.path)
             path = parsed.path
             qs = parse_qs(parsed.query)
@@ -47,6 +100,9 @@ def create_handler(engine: MigrationEngine):
                     html = INDEX_HTML_PATH.read_bytes()
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Referrer-Policy", "no-referrer")
                     self.send_header("Content-Length", str(len(html)))
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
@@ -81,6 +137,8 @@ def create_handler(engine: MigrationEngine):
                 self._send_json({"error": str(exc)}, status=500)
 
         def do_POST(self) -> None:
+            if self._reject_untrusted(post=True):
+                return
             parsed = urlparse(self.path)
             path = parsed.path
 
@@ -191,6 +249,6 @@ def run_web_server(
     b2_ok, _ = check_b2_credentials_status(engine.settings.b2_key_file)
     if auto_scan_if_empty and b2_ok and not engine.db.get_bucket_summaries():
         engine.start_background_scan()
-    server = ThreadingHTTPServer((host, port), create_handler(engine))
+    server = ThreadingHTTPServer((host, port), create_handler(engine, allowed_hosts=allowed_hosts_for(host)))
     return server
 
