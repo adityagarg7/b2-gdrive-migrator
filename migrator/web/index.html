@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FourVectors — Backblaze B2 → Google Drive Migrator</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --panel: #131a26;
+      --panel-alt: #182232;
+      --border: #253349;
+      --text: #e6edf7;
+      --muted: #8ea0bc;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --purple: #8b5cf6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    header {
+      background: #0e1420;
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-logo {
+      width: 36px; height: 36px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #ef4444 0%, #3b82f6 55%, #10b981 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 15px; color: #fff;
+    }
+    .brand h1 { margin: 0; font-size: 17px; font-weight: 700; }
+    .brand p { margin: 0; font-size: 12px; color: var(--muted); }
+
+    .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 11px; border-radius: 999px;
+      font-size: 12px; font-weight: 600;
+      background: var(--panel-alt); border: 1px solid var(--border);
+    }
+    .badge.IDLE { color: var(--muted); }
+    .badge.RUNNING { background: rgba(16,185,129,0.14); border-color: var(--green); color: #34d399; }
+    .badge.SCANNING { background: rgba(59,130,246,0.16); border-color: var(--accent); color: #60a5fa; }
+    .badge.CACHE_WAIT, .badge.QUOTA_PAUSED, .badge.PAUSED, .badge.PAUSING {
+      background: rgba(245,158,11,0.15); border-color: var(--amber); color: #fbbf24;
+    }
+    .badge.COMPLETED_BUCKET { background: rgba(16,185,129,0.2); border-color: var(--green); color: #6ee7b7; }
+    .badge.ERROR { background: rgba(239,68,68,0.15); border-color: var(--red); color: #f87171; }
+
+    main { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; display: grid; gap: 18px; }
+
+    .btn {
+      cursor: pointer; border: 1px solid var(--border);
+      background: var(--panel-alt); color: var(--text);
+      padding: 8px 14px; border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+      transition: all 0.15s ease;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn:hover:not(:disabled) { border-color: #42587a; background: #1e2b3f; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-success { background: var(--green); border-color: var(--green); color: #052e1e; font-weight: 700; }
+    .btn-success:hover:not(:disabled) { background: #059669; color: #fff; }
+    .btn-warn { background: rgba(245,158,11,0.18); border-color: var(--amber); color: #fbbf24; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+    @media (max-width: 980px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .card-title {
+      font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); font-weight: 700; margin: 0 0 12px 0;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+
+    /* Bucket Pipeline Cards */
+    .bucket-card {
+      background: var(--panel);
+      border: 1.5px solid var(--border);
+      border-radius: 11px;
+      padding: 14px;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.1s;
+      position: relative;
+    }
+    .bucket-card:hover { border-color: #415a80; }
+    .bucket-card.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(59,130,246,0.12);
+      background: linear-gradient(180deg, rgba(59,130,246,0.09) 0%, var(--panel) 100%);
+    }
+    .step-pill {
+      font-size: 11px; font-weight: 700; padding: 2px 8px;
+      border-radius: 99px; background: #1f2d44; color: #93c5fd;
+    }
+    .bucket-name { font-weight: 700; font-size: 15px; margin: 6px 0 3px; word-break: break-all; }
+    .bucket-meta { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+
+    .progress-track {
+      width: 100%; height: 8px; background: #0c111b;
+      border-radius: 99px; overflow: hidden; margin-top: 10px;
+      border: 1px solid #1d283a;
+    }
+    .progress-fill {
+      height: 100%; background: linear-gradient(90deg, var(--accent), var(--green));
+      transition: width 0.35s ease;
+    }
+
+    /* Telemetry banner */
+    .telemetry-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+      gap: 12px;
+    }
+    .metric-box {
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 600; }
+    .metric-val { font-size: 20px; font-weight: 700; margin-top: 3px; }
+    .metric-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+    /* Mode Selector */
+    .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    @media (max-width: 640px) { .mode-grid { grid-template-columns: 1fr; } }
+    .mode-option {
+      border: 1.5px solid var(--border);
+      background: var(--panel-alt);
+      border-radius: 10px;
+      padding: 12px;
+      cursor: pointer;
+    }
+    .mode-option.selected {
+      border-color: var(--green);
+      background: rgba(16,185,129,0.08);
+    }
+    .mode-option h4 { margin: 0 0 4px; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
+    .mode-option p { margin: 0; font-size: 12px; color: var(--muted); }
+
+    /* Form Controls */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 12px; color: var(--muted); font-weight: 600; }
+    .form-group input[type="text"], .form-group input[type="number"], .form-group select {
+      background: #0d131f; border: 1px solid var(--border); color: var(--text);
+      padding: 7px 10px; border-radius: 7px; font-size: 13px;
+    }
+    .checks-row { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; font-size: 12.5px; }
+    .checks-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+    /* Workers & Tables */
+    .worker-item {
+      background: #0e1522; border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+    }
+    .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 12px; padding-bottom: 8px; flex-wrap: wrap; }
+    .tab-btn {
+      background: transparent; border: 1px solid transparent; color: var(--muted);
+      padding: 6px 12px; border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600;
+    }
+    .tab-btn.active { background: var(--panel-alt); border-color: var(--border); color: var(--text); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1d283a; }
+    th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px; }
+
+    .st-pill { padding: 2px 7px; border-radius: 5px; font-size: 11px; font-weight: 700; }
+    .st-COMPLETED { background: rgba(16,185,129,0.18); color: #34d399; }
+    .st-SKIPPED_DEDUP, .st-SKIPPED_EXISTS { background: rgba(139,92,246,0.18); color: #c4b5fd; }
+    .st-IN_PROGRESS { background: rgba(59,130,246,0.2); color: #60a5fa; }
+    .st-PENDING { background: #1b2536; color: var(--muted); }
+    .st-FAILED { background: rgba(239,68,68,0.2); color: #f87171; }
+
+    .log-list { max-height: 310px; overflow-y: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+    .log-row { padding: 5px 8px; border-bottom: 1px solid #162030; display: flex; gap: 10px; }
+    .log-SUCCESS { color: #34d399; }
+    .log-ERROR { color: #f87171; }
+    .log-WARN { color: #fbbf24; }
+    .log-INFO { color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-logo">FV</div>
+      <div>
+        <h1>Backblaze B2 → Google Drive Migration Studio</h1>
+        <p id="stateDetailText">Initializing...</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span id="engineBadge" class="badge IDLE">IDLE</span>
+      <button id="btnStart" class="btn btn-success" onclick="startMigration()">▶ Start / Resume Bucket</button>
+      <button id="btnPause" class="btn btn-warn" onclick="pauseMigration()" disabled>⏸ Pause</button>
+      <button id="btnScan" class="btn" onclick="rescanBuckets()">↻ Re-Scan B2</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Step-by-Step Bucket Selector -->
+    <section>
+      <div class="card-title">
+        <span>1. Select Bucket to Migrate (Recommended Order: Staging → Archive → 16-Sep-27 → Rejected)</span>
+        <span id="totalCatalogLabel" style="text-transform:none; font-weight:500;"></span>
+      </div>
+      <div id="bucketGrid" class="grid-4"></div>
+    </section>
+
+    <!-- Live Telemetry Metrics -->
+    <section class="telemetry-bar">
+      <div class="metric-box">
+        <div class="metric-label">Active Bucket Progress</div>
+        <div class="metric-val" id="metricBucketPct">0.0%</div>
+        <div class="metric-sub" id="metricBucketSub">0 / 0 files</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Live Transfer Speed</div>
+        <div class="metric-val" id="metricSpeed">0.0 MiB/s</div>
+        <div class="metric-sub" id="metricEta">ETA: —</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">24h Google Drive Upload Cap</div>
+        <div class="metric-val" id="metricQuota24h">0.0 / 690 GiB</div>
+        <div class="metric-sub">Auto-pauses safely before 750 GB/day limit</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Local C:\ Free Space Guard</div>
+        <div class="metric-val" id="metricCFree">— GiB</div>
+        <div class="metric-sub" id="metricCFreeSub">0 B used in Cloud Mode</div>
+      </div>
+    </section>
+
+    <!-- Mode & Settings + Plan & Active Streams -->
+    <section class="grid-2">
+      <div class="card">
+        <div class="card-title">
+          <span>2. Google Drive Connection & Transfer Settings</span>
+          <span id="saveStatus" style="color:var(--green); text-transform:none;"></span>
+        </div>
+
+        <div class="mode-grid">
+          <div id="modeMountedCard" class="mode-option" onclick="selectMode('mounted')">
+            <h4>
+              <span>Mounted G:\ Drive</span>
+              <span id="mountedBadge" class="st-pill st-COMPLETED">Ready</span>
+            </h4>
+            <p>Zero sign-in — uses your signed-in Google Drive for Desktop (`G:\`) with automatic `C:\` cache space guard + SHA-1 check.</p>
+          </div>
+
+          <div id="modeCloudCard" class="mode-option" onclick="selectMode('cloud')">
+            <h4>
+              <span>Direct Cloud Stream</span>
+              <span id="cloudBadge" class="st-pill st-PENDING">Sign-In Needed</span>
+            </h4>
+            <p>Streams B2 HTTP → Drive v3 API directly in RAM (`0 GB` `C:\` disk used) with 7-day resumable sessions + server SHA-1 check.</p>
+          </div>
+        </div>
+
+        <!-- Backblaze B2 Key Banner (auto-expands on a fresh PC if key isn't set yet) -->
+        <div style="background:#0d1422; border:1px solid var(--border); border-radius:9px; padding:10px 13px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px;">
+            <span id="b2KeyStatusText">Checking Backblaze B2 key...</span>
+            <button class="btn btn-sm" onclick="toggleB2Form()">Configure B2 Key</button>
+          </div>
+          <div id="b2CredsForm" style="display:none; margin-top:10px; gap:8px; grid-template-columns:1fr 1fr auto; align-items:end;">
+            <div class="form-group">
+              <label>Backblaze keyID</label>
+              <input type="text" id="inpB2KeyId" placeholder="005..." />
+            </div>
+            <div class="form-group">
+              <label>Backblaze applicationKey</label>
+              <input type="password" id="inpB2AppKey" placeholder="K005..." />
+            </div>
+            <button class="btn btn-primary btn-sm" style="height:33px;" onclick="saveB2Credentials()">Save & Scan</button>
+          </div>
+        </div>
+
+        <!-- 1-Click Cloud OAuth & Account Switcher Banner -->
+        <div id="oauthBox" style="background:#0d1422; border:1px solid var(--border); border-radius:9px; padding:12px 14px; margin-bottom:14px; display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div style="font-size:12.5px;" id="oauthStatusText">
+              Direct Cloud OAuth: Not connected yet.
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button id="btnOAuthConnect" class="btn btn-primary btn-sm" onclick="startOAuth(true, false)">🔑 Sign In (Open Browser)</button>
+              <button id="btnOAuthLinkOnly" class="btn btn-sm" onclick="startOAuth(false, false)" title="Generate sign-in link to paste into Incognito or another Chrome profile">📋 Link for Other Profile / Incognito</button>
+              <button id="btnOAuthSwitch" class="btn btn-primary btn-sm" style="display:none;" onclick="startOAuth(true, true)">🔄 Switch Google Account</button>
+              <button id="btnOAuthSwitchLink" class="btn btn-sm" style="display:none;" onclick="startOAuth(false, true)" title="Switch to an account in another Chrome profile or Incognito">📋 Switch via Link</button>
+              <button id="btnOAuthCancel" class="btn btn-warn btn-sm" style="display:none;" onclick="cancelOAuth()">✕ Cancel</button>
+              <button id="btnOAuthDisconnect" class="btn btn-sm" style="display:none;" onclick="disconnectOAuth()">Disconnect</button>
+            </div>
+          </div>
+          <div id="oauthUrlRow" style="display:none; background:#080d17; border:1px solid #283a56; border-radius:7px; padding:8px 10px; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+            <span class="mono" id="oauthUrlText" style="color:#93c5fd; word-break:break-all; flex:1;"></span>
+            <button class="btn btn-sm btn-primary" onclick="copyOAuthUrl()">Copy Link</button>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Google Drive Destination</label>
+            <select id="inpDriveLocation" onchange="saveSettings()">
+              <option value="my_drive">My Drive</option>
+              <option value="shared_drive">Shared Drive (e.g. FV-status)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Shared Drive Name (if Shared Drive)</label>
+            <input type="text" id="inpSharedDriveName" value="FV-status" onchange="saveSettings()" />
+          </div>
+          <div class="form-group">
+            <label>Destination Root Folder</label>
+            <input type="text" id="inpDestRoot" value="FourVectors-B2-Migration" onchange="saveSettings()" />
+          </div>
+          <div class="form-group">
+            <label>Parallel Workers / C:\ Floor (GiB)</label>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+              <input type="number" id="inpWorkers" min="1" max="6" value="2" title="Parallel file streams" onchange="saveSettings()" />
+              <input type="number" id="inpMinCFree" min="5" max="100" step="1" value="15" title="Minimum C:\ free GiB in G:\ mode" onchange="saveSettings()" />
+            </div>
+          </div>
+        </div>
+
+        <div class="checks-row">
+          <label>
+            <input type="checkbox" id="chkIncludeBucket" checked onchange="saveSettings()" />
+            Keep bucket name subfolder (`&lt;Root&gt;/&lt;bucket-name&gt;/...`)
+          </label>
+          <label>
+            <input type="checkbox" id="chkSkipDedup" checked onchange="saveSettings()" />
+            Skip cross-bucket duplicates already migrated (saves ~1.6 TiB on `fourvectors-16-sep-27` after `archive`)
+          </label>
+          <label>
+            <input type="checkbox" id="chkNormalizeCats" onchange="saveSettings()" />
+            Merge split category folder names (`metal-fabrication-welding` → `metal-fab-welding`, etc.)
+          </label>
+        </div>
+      </div>
+
+      <!-- Active Streams & Bucket Plan Summary -->
+      <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+        <div>
+          <div class="card-title">
+            <span>3. Active Streams & Migration Plan</span>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="btn btn-sm" onclick="resetBucketProgress(false)" title="Reset current bucket back to Pending (e.g. to re-stream into a newly connected Google account)">↺ Reset Bucket</button>
+              <button class="btn btn-sm" onclick="retryFailed()">Retry Failed</button>
+            </div>
+          </div>
+
+          <div id="planSummaryBox" style="background:var(--panel-alt); border:1px solid var(--border); border-radius:9px; padding:12px 14px; margin-bottom:12px; font-size:13px;">
+            Loading bucket plan...
+          </div>
+
+          <div style="font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">
+            Active Transfer Workers
+          </div>
+          <div id="workersContainer">
+            <div style="color:var(--muted); font-size:13px; padding:12px 0;">No active file streams right now. Click <b>Start / Resume Bucket</b> above to begin.</div>
+          </div>
+        </div>
+
+        <div id="destPathPreview" class="mono" style="background:#0c121d; border:1px solid var(--border); border-radius:8px; padding:9px 12px; color:#93c5fd; margin-top:10px;">
+          Target: G:\My Drive\FourVectors-B2-Migration\fourvectors-staging\...
+        </div>
+      </div>
+    </section>
+
+    <!-- Explorer & Logs Tabs -->
+    <section class="card">
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('files', this)">Bucket Files & SHA-1 Verification</button>
+        <button class="tab-btn" onclick="switchTab('mappings', this)">Sample Path Mappings</button>
+        <button class="tab-btn" onclick="switchTab('logs', this)">Live Activity Log</button>
+
+        <div style="margin-left:auto; display:flex; gap:8px; align-items:center;" id="fileFilterWrap">
+          <select id="selFileStatus" onchange="loadFiles()" style="background:#0d131f; border:1px solid var(--border); color:var(--text); padding:5px 9px; border-radius:6px; font-size:12px;">
+            <option value="">All Statuses</option>
+            <option value="IN_PROGRESS">In Progress</option>
+            <option value="COMPLETED">Completed (SHA-1 Verified)</option>
+            <option value="SKIPPED_DEDUP">Skipped (Cross-Bucket Duplicate)</option>
+            <option value="SKIPPED_EXISTS">Skipped (Already on Drive)</option>
+            <option value="PENDING">Pending</option>
+            <option value="FAILED">Failed</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="tab-files">
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>File Path</th>
+                <th>Size</th>
+                <th>Status</th>
+                <th>B2 SHA-1</th>
+                <th>Drive Verified SHA-1</th>
+              </tr>
+            </thead>
+            <tbody id="filesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="tab-mappings" style="display:none;">
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Backblaze B2 Source</th>
+                <th>Google Drive Destination</th>
+                <th>Size</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody id="mappingsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="tab-logs" style="display:none;">
+        <div id="logsContainer" class="log-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let latestState = null;
+    let currentPlan = null;
+    let activeTab = 'files';
+    let formDirtyLock = false;
+    let pollCounter = 0;
+
+    function fmtBytes(bytes) {
+      if (bytes == null || isNaN(bytes)) return '—';
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+      const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+      const val = bytes / Math.pow(1024, i);
+      return `${val.toFixed(i >= 3 ? 2 : 1)} ${units[i]}`;
+    }
+
+    function fmtEta(sec) {
+      if (!sec || sec <= 0) return 'ETA: —';
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 24) return `ETA: ${(h / 24).toFixed(1)}d`;
+      if (h > 0) return `ETA: ${h}h ${m}m`;
+      if (m > 0) return `ETA: ${m}m ${s}s`;
+      return `ETA: ${s}s`;
+    }
+
+    async function apiGet(url) {
+      const r = await fetch(url);
+      return await r.json();
+    }
+
+    async function apiPost(url, body = {}) {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return await r.json();
+    }
+
+    function switchTab(tab, btn) {
+      activeTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-files').style.display = tab === 'files' ? 'block' : 'none';
+      document.getElementById('tab-mappings').style.display = tab === 'mappings' ? 'block' : 'none';
+      document.getElementById('tab-logs').style.display = tab === 'logs' ? 'block' : 'none';
+      document.getElementById('fileFilterWrap').style.display = tab === 'files' ? 'flex' : 'none';
+      if (tab === 'files') loadFiles();
+      if (tab === 'mappings') loadPlan();
+    }
+
+    async function selectBucket(bname) {
+      await apiPost('/api/settings', { active_bucket: bname });
+      await refreshAll(true);
+    }
+
+    async function selectMode(mode) {
+      await apiPost('/api/settings', { transfer_mode: mode });
+      await refreshAll(false);
+    }
+
+    async function saveSettings() {
+      formDirtyLock = true;
+      const payload = {
+        drive_location: document.getElementById('inpDriveLocation').value,
+        shared_drive_name: document.getElementById('inpSharedDriveName').value.trim(),
+        dest_root_folder: document.getElementById('inpDestRoot').value.trim(),
+        max_workers: parseInt(document.getElementById('inpWorkers').value || '2', 10),
+        min_c_free_gib: parseFloat(document.getElementById('inpMinCFree').value || '15'),
+        include_bucket_folder: document.getElementById('chkIncludeBucket').checked,
+        skip_cross_bucket_duplicates: document.getElementById('chkSkipDedup').checked,
+        normalize_categories: document.getElementById('chkNormalizeCats').checked,
+      };
+      await apiPost('/api/settings', payload);
+      const st = document.getElementById('saveStatus');
+      st.textContent = '✓ Saved';
+      setTimeout(() => { st.textContent = ''; formDirtyLock = false; }, 1200);
+      await loadPlan();
+      await pollStatus(false);
+    }
+
+    async function startMigration() {
+      const res = await apiPost('/api/start', {});
+      if (!res.ok) {
+        alert(res.message || res.error || 'Could not start migration');
+      }
+      await refreshAll(false);
+    }
+
+    async function pauseMigration() {
+      await apiPost('/api/pause', {});
+      await pollStatus(false);
+    }
+
+    async function rescanBuckets() {
+      await apiPost('/api/scan', {});
+      await pollStatus(false);
+    }
+
+    let b2FormManuallyToggled = false;
+
+    function toggleB2Form() {
+      b2FormManuallyToggled = true;
+      const el = document.getElementById('b2CredsForm');
+      el.style.display = el.style.display === 'none' ? 'grid' : 'none';
+    }
+
+    async function saveB2Credentials() {
+      const key_id = document.getElementById('inpB2KeyId').value.trim();
+      const application_key = document.getElementById('inpB2AppKey').value.trim();
+      if (!key_id || !application_key) {
+        alert('Please enter both Backblaze keyID and applicationKey.');
+        return;
+      }
+      const res = await apiPost('/api/b2-credentials', { key_id, application_key });
+      if (res.error) {
+        alert(res.error);
+        return;
+      }
+      document.getElementById('inpB2AppKey').value = '';
+      document.getElementById('b2CredsForm').style.display = 'none';
+      await refreshAll(true);
+    }
+
+    async function retryFailed() {
+      await apiPost('/api/retry-failed', {});
+      await refreshAll(true);
+    }
+
+    async function resetBucketProgress(resetAll = false) {
+      const bname = latestState?.settings?.active_bucket || 'this bucket';
+      const msg = resetAll
+        ? 'Reset progress on ALL buckets back to Pending so they migrate to your newly connected Google Drive account?'
+        : `Reset '${bname}' back to Pending (0%) so you can migrate it to your newly connected Google Drive account?`;
+      if (!confirm(msg)) return;
+      const res = await apiPost('/api/reset-progress', { all: resetAll });
+      if (res.error) alert(res.error);
+      await refreshAll(true);
+    }
+
+    async function startOAuth(openBrowser = true, switchAccount = false) {
+      await apiPost('/api/auth/start', { open_browser: openBrowser, switch_account: switchAccount });
+      await pollStatus(false);
+    }
+
+    async function cancelOAuth() {
+      await apiPost('/api/auth/cancel', {});
+      await pollStatus(false);
+    }
+
+    async function copyOAuthUrl() {
+      const url = document.getElementById('oauthUrlText').textContent;
+      if (!url) return;
+      await navigator.clipboard.writeText(url);
+      alert('Copied sign-in link! Paste it into the browser profile / Incognito window signed into your target Google Drive account.');
+    }
+
+    async function disconnectOAuth() {
+      await apiPost('/api/auth/disconnect', {});
+      await pollStatus(true);
+    }
+
+    function renderBuckets(buckets, activeBucket) {
+      const grid = document.getElementById('bucketGrid');
+      const nonEmpty = buckets.filter(b => b.total_files > 0 || b.bucket_name === activeBucket);
+      let totalFiles = 0, totalBytes = 0;
+      buckets.forEach(b => { totalFiles += b.total_files; totalBytes += b.total_bytes; });
+      document.getElementById('totalCatalogLabel').textContent =
+        `Total Catalog: ${totalFiles.toLocaleString()} files (${fmtBytes(totalBytes)})`;
+
+      grid.innerHTML = nonEmpty.map(b => {
+        const isAct = b.bucket_name === activeBucket;
+        const stepBadge = b.step_number ? `<span class="step-pill">Step ${b.step_number}</span>` : '';
+        const statusLabel = b.progress_pct >= 100 && b.total_files > 0
+          ? `<span class="st-pill st-COMPLETED">✓ 100% Verified</span>`
+          : `<span style="font-size:12px; color:var(--muted);">${b.progress_pct.toFixed(1)}%</span>`;
+
+        return `
+          <div class="bucket-card ${isAct ? 'active' : ''}" onclick="selectBucket('${b.bucket_name}')">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              ${stepBadge}
+              ${statusLabel}
+            </div>
+            <div class="bucket-name">${b.bucket_name}</div>
+            <div class="bucket-meta">
+              <span>${b.done_files.toLocaleString()} / ${b.total_files.toLocaleString()} files</span>
+              <span>${fmtBytes(b.done_bytes)} / ${fmtBytes(b.total_bytes)}</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" style="width:${Math.min(100, b.progress_pct)}%;"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderStatus(data) {
+      latestState = data;
+      const st = data.state;
+      const badge = document.getElementById('engineBadge');
+      badge.className = `badge ${st}`;
+      badge.textContent = st.replace('_', ' ');
+      document.getElementById('stateDetailText').textContent = data.state_detail || '';
+
+      const isBusy = ['RUNNING', 'SCANNING', 'PAUSING', 'CACHE_WAIT'].includes(st);
+      document.getElementById('btnStart').disabled = isBusy;
+      document.getElementById('btnPause').disabled = !['RUNNING', 'CACHE_WAIT', 'QUOTA_PAUSED'].includes(st);
+      document.getElementById('btnScan').disabled = isBusy;
+
+      const s = data.settings;
+      if (!formDirtyLock && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
+        document.getElementById('inpDriveLocation').value = s.drive_location;
+        document.getElementById('inpSharedDriveName').value = s.shared_drive_name;
+        document.getElementById('inpDestRoot').value = s.dest_root_folder;
+        document.getElementById('inpWorkers').value = s.max_workers;
+        document.getElementById('inpMinCFree').value = s.min_c_free_gib;
+        document.getElementById('chkIncludeBucket').checked = s.include_bucket_folder;
+        document.getElementById('chkSkipDedup').checked = s.skip_cross_bucket_duplicates;
+        document.getElementById('chkNormalizeCats').checked = s.normalize_categories;
+      }
+
+      // Mode cards
+      document.getElementById('modeMountedCard').classList.toggle('selected', s.transfer_mode === 'mounted');
+      document.getElementById('modeCloudCard').classList.toggle('selected', s.transfer_mode === 'cloud');
+
+      const mBadge = document.getElementById('mountedBadge');
+      if (data.telemetry.mounted_available) {
+        mBadge.className = 'st-pill st-COMPLETED';
+        mBadge.textContent = 'G:\\ Ready';
+      } else {
+        mBadge.className = 'st-pill st-FAILED';
+        mBadge.textContent = 'Not Mounted';
+      }
+
+      // Backblaze B2 key status
+      const b2El = document.getElementById('b2KeyStatusText');
+      const b2Form = document.getElementById('b2CredsForm');
+      if (data.b2?.configured) {
+        b2El.innerHTML = `✅ Backblaze B2 Key Configured (<code>${data.b2.key_hint}</code>)`;
+      } else {
+        b2El.innerHTML = `⚠️ Backblaze B2 Key Not Configured — paste your read-only key below to scan buckets:`;
+        if (!b2FormManuallyToggled) b2Form.style.display = 'grid';
+      }
+
+      // OAuth status
+      const cBadge = document.getElementById('cloudBadge');
+      const oauthText = document.getElementById('oauthStatusText');
+      const btnConn = document.getElementById('btnOAuthConnect');
+      const btnLink = document.getElementById('btnOAuthLinkOnly');
+      const btnSwitch = document.getElementById('btnOAuthSwitch');
+      const btnSwitchLink = document.getElementById('btnOAuthSwitchLink');
+      const btnCancel = document.getElementById('btnOAuthCancel');
+      const btnDisc = document.getElementById('btnOAuthDisconnect');
+      const urlRow = document.getElementById('oauthUrlRow');
+      const urlText = document.getElementById('oauthUrlText');
+
+      if (data.auth.connected) {
+        cBadge.className = 'st-pill st-COMPLETED';
+        cBadge.textContent = 'Connected';
+        const email = data.cloud_drive?.email ? ` as <b>${data.cloud_drive.email}</b>` : '';
+        const freeCloud = data.cloud_drive?.free_bytes != null
+          ? ` (${fmtBytes(data.cloud_drive.free_bytes)} cloud free)`
+          : '';
+        oauthText.innerHTML = `✅ Direct Cloud Account Connected${email}${freeCloud}`;
+        btnConn.style.display = 'none';
+        btnLink.style.display = 'none';
+        btnSwitch.style.display = 'inline-flex';
+        btnSwitchLink.style.display = 'inline-flex';
+        btnCancel.style.display = 'none';
+        btnDisc.style.display = 'inline-flex';
+        urlRow.style.display = 'none';
+      } else if (data.auth.auth_state === 'SIGNING_IN') {
+        cBadge.className = 'st-pill st-IN_PROGRESS';
+        cBadge.textContent = 'Waiting for Sign-In...';
+        oauthText.innerHTML = `⏳ Sign into the target Google account in your browser (or copy the link below into another profile / Incognito):`;
+        btnConn.style.display = 'none';
+        btnLink.style.display = 'none';
+        btnSwitch.style.display = 'none';
+        btnSwitchLink.style.display = 'none';
+        btnCancel.style.display = 'inline-flex';
+        btnDisc.style.display = 'none';
+        if (data.auth.auth_url) {
+          urlRow.style.display = 'flex';
+          urlText.textContent = data.auth.auth_url;
+        } else {
+          urlRow.style.display = 'none';
+        }
+      } else {
+        cBadge.className = 'st-pill st-PENDING';
+        cBadge.textContent = 'Sign-In Needed';
+        const err = data.auth.auth_error ? ` <span style="color:var(--red);">(${data.auth.auth_error})</span>` : '';
+        oauthText.innerHTML = `Connect any Google Drive account for zero-disk Direct Cloud Streaming:${err}`;
+        btnConn.style.display = 'inline-flex';
+        btnLink.style.display = 'inline-flex';
+        btnSwitch.style.display = 'none';
+        btnSwitchLink.style.display = 'none';
+        btnCancel.style.display = 'none';
+        btnDisc.style.display = 'none';
+        urlRow.style.display = 'none';
+      }
+
+      // Active bucket metrics
+      renderBuckets(data.buckets, s.active_bucket);
+      const actB = data.buckets.find(b => b.bucket_name === s.active_bucket);
+      if (actB) {
+        document.getElementById('metricBucketPct').textContent = `${actB.progress_pct.toFixed(1)}%`;
+        document.getElementById('metricBucketSub').textContent =
+          `${actB.done_files.toLocaleString()}/${actB.total_files.toLocaleString()} files • ${fmtBytes(actB.done_bytes)} / ${fmtBytes(actB.total_bytes)}`;
+      }
+
+      document.getElementById('metricSpeed').textContent = `${(data.telemetry.speed_bps / (1024 * 1024)).toFixed(2)} MiB/s`;
+      document.getElementById('metricEta').textContent = fmtEta(data.telemetry.eta_seconds);
+      document.getElementById('metricQuota24h').textContent =
+        `${(data.telemetry.rolling_24h_bytes / Math.pow(1024, 3)).toFixed(2)} / ${s.daily_upload_limit_gib} GiB`;
+      document.getElementById('metricCFree').textContent = `${data.telemetry.c_drive_free_gib.toFixed(1)} GiB`;
+      document.getElementById('metricCFreeSub').textContent =
+        s.transfer_mode === 'cloud'
+          ? 'Cloud Stream active (0 B written to C:\\)'
+          : `Mounted G:\\ guard keeps ≥ ${s.min_c_free_gib} GiB free`;
+
+      const subBucket = s.include_bucket_folder ? `\\${s.active_bucket}` : '';
+      document.getElementById('destPathPreview').textContent =
+        s.transfer_mode === 'mounted'
+          ? `Target (Mounted): ${data.telemetry.mounted_dest_preview}${subBucket}\\...`
+          : `Target (Cloud API): ${s.drive_location === 'shared_drive' ? 'Shared Drive [' + s.shared_drive_name + ']' : 'My Drive'}/${s.dest_root_folder}${s.include_bucket_folder ? '/' + s.active_bucket : ''}/...`;
+
+      // Active workers
+      const wCont = document.getElementById('workersContainer');
+      if (!data.active_workers || data.active_workers.length === 0) {
+        wCont.innerHTML = `<div style="color:var(--muted); font-size:13px; padding:8px 0;">No active file streams right now.</div>`;
+      } else {
+        wCont.innerHTML = data.active_workers.map(w => {
+          const pct = w.size_bytes > 0 ? ((w.bytes_done / w.size_bytes) * 100).toFixed(1) : '100.0';
+          return `
+            <div class="worker-item">
+              <div style="display:flex; justify-content:space-between; font-size:12.5px; font-weight:600;">
+                <span class="mono">[${w.worker}] ${w.file_name}</span>
+                <span>${fmtBytes(w.bytes_done)} / ${fmtBytes(w.size_bytes)} (${pct}%)</span>
+              </div>
+              <div class="progress-track" style="height:6px; margin-top:6px;">
+                <div class="progress-fill" style="width:${Math.min(100, pct)}%;"></div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // Logs
+      const logsEl = document.getElementById('logsContainer');
+      logsEl.innerHTML = (data.events || []).map(ev => {
+        const d = new Date(ev.ts * 1000).toLocaleTimeString();
+        const btag = ev.bucket_name ? `[${ev.bucket_name}] ` : '';
+        return `<div class="log-row"><span style="color:var(--muted);">${d}</span><span class="log-${ev.level}"><b>${ev.level}</b> ${btag}${ev.message}</span></div>`;
+      }).join('');
+    }
+
+    async function loadPlan() {
+      const plan = await apiGet('/api/plan');
+      currentPlan = plan;
+      const box = document.getElementById('planSummaryBox');
+      if (!plan.scanned) {
+        box.innerHTML = `Scanning Backblaze B2 catalog for <b>${plan.bucket_name}</b>...`;
+        return;
+      }
+      let extraNote = '';
+      if (plan.archive_overlap_files > 0) {
+        extraNote = `<div style="margin-top:6px; color:#c4b5fd; font-size:12px;">
+          💡 Dedup Insight: <b>${plan.archive_overlap_files}</b> files (${fmtBytes(plan.archive_overlap_bytes)}) in this bucket match <code>fourvectors-archive</code> and will be skipped automatically once <code>archive</code> is migrated!
+        </div>`;
+      } else if (plan.would_dedup_now_files > 0) {
+        extraNote = `<div style="margin-top:6px; color:#34d399; font-size:12px;">
+          ✨ Cross-Bucket Dedup will skip <b>${plan.would_dedup_now_files}</b> already-migrated files (${fmtBytes(plan.would_dedup_now_bytes)})!
+        </div>`;
+      }
+      box.innerHTML = `
+        <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+          <span><b>Selected Bucket:</b> <code>${plan.bucket_name}</code></span>
+          <span><b>Remaining to Transfer:</b> ${plan.net_transfer_files.toLocaleString()} files (${fmtBytes(plan.net_transfer_bytes)})</span>
+          <span><b>Failed:</b> ${plan.summary.failed_files}</span>
+        </div>
+        ${extraNote}
+      `;
+
+      const mBody = document.getElementById('mappingsTableBody');
+      mBody.innerHTML = (plan.sample_mappings || []).map(m => `
+        <tr>
+          <td class="mono">${m.source}</td>
+          <td class="mono" style="color:#93c5fd;">${m.destination}</td>
+          <td>${fmtBytes(m.size_bytes)}</td>
+          <td><span class="st-pill st-${m.status}">${m.status}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadFiles() {
+      const st = document.getElementById('selFileStatus').value;
+      const res = await apiGet(`/api/files?status=${encodeURIComponent(st)}&limit=120`);
+      const tbody = document.getElementById('filesTableBody');
+      const files = res.files || [];
+      if (files.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="color:var(--muted); text-align:center; padding:18px;">No matching files in this bucket/filter.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = files.map(f => `
+        <tr>
+          <td class="mono">${f.file_name}</td>
+          <td>${fmtBytes(f.size_bytes)}</td>
+          <td>
+            <span class="st-pill st-${f.status}">${f.status}</span>
+            ${f.last_error ? `<div style="color:var(--red); font-size:11px; margin-top:2px;">${f.last_error}</div>` : ''}
+          </td>
+          <td class="mono" style="color:var(--muted);">${f.b2_sha1 ? f.b2_sha1.slice(0, 14) + '…' : '—'}</td>
+          <td class="mono" style="color:var(--green);">${f.verified_sha1 ? '✓ ' + f.verified_sha1.slice(0, 14) + '…' : '—'}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function pollStatus(withQuota = false) {
+      try {
+        const data = await apiGet(`/api/status?quota=${withQuota ? '1' : '0'}`);
+        renderStatus(data);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function refreshAll(withQuota = false) {
+      await pollStatus(withQuota);
+      await loadPlan();
+      await loadFiles();
+    }
+
+    // Initial load + live loop
+    refreshAll(true);
+    setInterval(async () => {
+      pollCounter++;
+      await pollStatus(pollCounter % 20 === 0);
+      if (pollCounter % 4 === 0) {
+        if (activeTab === 'files') await loadFiles();
+        await loadPlan();
+      }
+    }, 1500);
+  </script>
+</body>
+</html>
+

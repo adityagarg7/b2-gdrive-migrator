@@ -1,0 +1,31 @@
+# Local state, OAuth tokens, Backblaze credentials, and SQLite checkpoints (NEVER commit!)
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+rclone.conf
+settings.json
+b2_credentials.json
+
+# Portable binaries (auto-downloaded on first run)
+bin/
+*.exe
+*.zip
+
+# Any local key files or env files
+.env
+.env.*
+*key*.txt
+b2-*.txt
+client_secret*.json
+*.b2part
+*.b2part.json
+
+# Python / OS artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
+Thumbs.db
